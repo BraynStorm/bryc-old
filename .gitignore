@@ -7,3 +7,6 @@
 !*.txt
 
 x/
+
+!bryc-c/
+!.clang-format
