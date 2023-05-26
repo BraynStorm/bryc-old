@@ -501,6 +501,10 @@ compile_to_c(char const* path)
         return;
     }
 
+    /*TODO:
+        This reads more than necessary somehow - off the end of file
+        int main () { return 0; }
+    */
     puts("------------- SOURCE -------------------");
     puts(source_text);
     puts("----------------------------------------");
