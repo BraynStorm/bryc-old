@@ -456,20 +456,21 @@ parse(struct lex_state* lex)
     struct arena* arena = &state.node_arena;
     struct arena* arena_parent = &parent_arena_;
 
-#define push_parent(NODE)                                             \
-    {                                                                 \
-        struct ast_node_with_parent* nc = arena_push(                 \
-            arena_parent,                                             \
-            struct ast_node_with_parent                               \
-        );                                                            \
-        nc->senior = current;                                         \
-        nc->node = NODE;                                              \
-        current = nc;                                                 \
-        arena_pop(arena_parent, sizeof(struct ast_node_with_parent)); \
-    }                                                                 \
+#define push_parent(NODE)                             \
+    {                                                 \
+        struct ast_node_with_parent* nc = arena_push( \
+            arena_parent,                             \
+            struct ast_node_with_parent               \
+        );                                            \
+        nc->senior = current;                         \
+        nc->node = NODE;                              \
+        current = nc;                                 \
+    }                                                 \
     /**/
 
-#define pop_parent (current = current->senior)
+#define pop_parent               \
+    (current = current->senior); \
+    arena_pop(arena_parent, sizeof(struct ast_node_with_parent))
 
     struct ast_node_with_parent* current = 0;
     push_parent(0);
@@ -483,7 +484,6 @@ parse(struct lex_state* lex)
                 pop_parent;
                 if (!current->node) {
                     /* We were a top-level scope, and we just got closed. */
-                    state.ast = child_scope->node;
                 } else {
                     switch (current->node->type) {
                         case ast_scope:
@@ -499,6 +499,7 @@ parse(struct lex_state* lex)
                             break;
                     }
                 }
+                state.ast = child_scope->node;
             } break;
 
             case tok_brace_r: {
@@ -531,6 +532,11 @@ parse(struct lex_state* lex)
                 /* Starting a new statement. */
                 node_t* node_statement = arena_push(arena, node_t);
                 node_statement->type = ast_statement;
+
+                if (current && current->node && current->node->type == ast_scope) {
+                    node_statement->next = current->node->scope.statements;
+                    current->node->scope.statements = node_statement;
+                }
 
                 state.ast = node_statement;
             } break;
