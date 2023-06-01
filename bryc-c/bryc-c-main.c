@@ -19,7 +19,8 @@ read_file(char const* path)
         int size = ftell(file);
         fseek(file, 0, SEEK_SET);
         data = calloc(1, size);
-        fread(data, 1, size, file);
+        size = fread(data, 1, size, file);
+        data[size] = 0;
         fclose(file);
     }
 
@@ -38,28 +39,30 @@ struct lex_state
     size_t cap_tokens;
 };
 
-#define TOKENS_SINGLE_CHAR \
-    TOKEN(semicolon, ';')  \
-    TOKEN(paren_l, '(')    \
-    TOKEN(paren_r, ')')    \
-    TOKEN(bracket_l, '[')  \
-    TOKEN(bracket_r, ']')  \
-    TOKEN(brace_l, '{')    \
-    TOKEN(brace_r, '}')    \
-    TOKEN(dot, '.')        \
-    TOKEN(hash, '#')       \
-    TOKEN(equals, '=')     \
-    TOKEN(plus, '+')       \
-    TOKEN(minus, '-')      \
-    TOKEN(star, '*')       \
-    TOKEN(slash, '/')      \
-    TOKEN(colon, ':')      \
-    TOKEN(question, '?')   \
-    TOKEN(hat, '^')        \
-    TOKEN(amp, '&')        \
-    TOKEN(pipe, '|')       \
-    TOKEN(at, '@')         \
+// clang-format off
+#define TOKENS_SINGLE_CHAR  \
+    TOKEN(semicolon, ';')   \
+    TOKEN(paren_l,   '(')   \
+    TOKEN(paren_r,   ')')   \
+    TOKEN(bracket_l, '[')   \
+    TOKEN(bracket_r, ']')   \
+    TOKEN(brace_l,   '{')   \
+    TOKEN(brace_r,   '}')   \
+    TOKEN(dot,       '.')   \
+    TOKEN(hash,      '#')   \
+    TOKEN(equals,    '=')   \
+    TOKEN(plus,      '+')   \
+    TOKEN(minus,     '-')   \
+    TOKEN(star,      '*')   \
+    TOKEN(slash,     '/')   \
+    TOKEN(colon,     ':')   \
+    TOKEN(question,  '?')   \
+    TOKEN(hat,       '^')   \
+    TOKEN(amp,       '&')   \
+    TOKEN(pipe,      '|')   \
+    TOKEN(at,        '@')   \
     /**/
+// clang-format on
 
 /* TODO: Make the lexer have a second pass producing these. */
 // #define TOKENS_MULTI_CHAR    \
@@ -385,37 +388,47 @@ struct parse_state
 };
 
 
-internal void debug_ast_dump_ast(struct parse_state* state, struct ast_node* current);
+internal void debug_ast_dump_ast(
+    struct parse_state* state,
+    struct ast_node* current,
+    int indent
+);
 
 internal void
-debug_ast_dump_ast__scope(struct parse_state* state, struct ast_scope s)
+debug_ast_dump_ast__scope(struct parse_state* state, struct ast_scope s, int indent)
 {
-    printf("SCOPE\n");
+    printf("%*cSCOPE\n", indent, ' ');
     for (struct ast_node* current = s.statements; current; current = current->next) {
-        printf("    ");
-        debug_ast_dump_ast(state, current);
-        printf("\n");
+        debug_ast_dump_ast(state, current, 2 + indent);
     }
-    printf("END_SCOPE\n");
+    printf("%*cEND_SCOPE\n", indent, ' ');
 }
 internal void
-debug_ast_dump_ast__statement(struct parse_state* state, struct ast_statement s)
+debug_ast_dump_ast__statement(
+    struct parse_state* state,
+    struct ast_statement s,
+    int indent
+)
 {
-    printf("STATEMENT");
+    printf("%*cSTATEMENT\n", indent, ' ');
 }
 internal void
-debug_ast_dump_ast(struct parse_state* state, struct ast_node* current)
+debug_ast_dump_ast(struct parse_state* state, struct ast_node* current, int indent)
 {
     for (; current; current = current->next) {
         switch (current->type) {
-            case ast_scope: debug_ast_dump_ast__scope(state, current->scope); break;
+            case ast_scope:
+                debug_ast_dump_ast__scope(state, current->scope, indent);
+                break;
             case ast_statement:
-                debug_ast_dump_ast__statement(state, current->statement);
+                debug_ast_dump_ast__statement(state, current->statement, indent);
                 break;
         }
     }
 }
 
+
+#define zero(p) memset(p, 0, sizeof(*(p)))
 
 internal struct parse_state
 parse(struct lex_state* lex)
@@ -423,39 +436,89 @@ parse(struct lex_state* lex)
     typedef struct token token_t;
     typedef struct ast_node node_t;
 
+    struct ast_node_with_parent
+    {
+        struct ast_node* node;
+        struct ast_node_with_parent* senior;
+    };
+
     int const MAX_NODES = 1024;
 
     struct parse_state state = { 0 };
-    state.node_arena.data = calloc(MAX_NODES, sizeof(node_t));
-    state.node_arena.capacity = MAX_NODES;
+    state.node_arena.capacity = MAX_NODES * sizeof(node_t);
+    state.node_arena.data = calloc(state.node_arena.capacity, 1);
+
+
+    struct arena parent_arena_ = { 0 };
+    parent_arena_.capacity = MAX_NODES * sizeof(struct ast_node_with_parent);
+    parent_arena_.data = calloc(parent_arena_.capacity, 1);
 
     struct arena* arena = &state.node_arena;
+    struct arena* arena_parent = &parent_arena_;
 
-    node_t* current_scope = 0;
+#define push_parent(NODE)                                             \
+    {                                                                 \
+        struct ast_node_with_parent* nc = arena_push(                 \
+            arena_parent,                                             \
+            struct ast_node_with_parent                               \
+        );                                                            \
+        nc->senior = current;                                         \
+        nc->node = NODE;                                              \
+        current = nc;                                                 \
+        arena_pop(arena_parent, sizeof(struct ast_node_with_parent)); \
+    }                                                                 \
+    /**/
+
+#define pop_parent (current = current->senior)
+
+    struct ast_node_with_parent* current = 0;
+    push_parent(0);
 
     for (int i = lex->n_tokens - 1; i >= 0; --i) {
         token_t tok = lex->tokens[i];
         switch (tok.type) {
             case tok_brace_l: {
                 /* End of the current scope. */
-                assert(state.ast);
-                assert(state.ast->type == ast_scope);
+                struct ast_node_with_parent* child_scope = current;
+                pop_parent;
+                if (!current->node) {
+                    /* We were a top-level scope, and we just got closed. */
+                    state.ast = child_scope->node;
+                } else {
+                    switch (current->node->type) {
+                        case ast_scope:
+                            /* We were a scope-in-scope. */
+                            child_scope->node->next = current->node->scope.statements;
+                            current->node->scope.statements = child_scope->node;
+                            break;
+                        case ast_statement:
+                            /*TODO:
+                                Think what this means.
+                                We were a child of a statement, somehow.
+                            */
+                            break;
+                    }
+                }
             } break;
 
             case tok_brace_r: {
                 /* New scope. */
                 node_t* node_scope = arena_push(arena, node_t);
+                zero(node_scope);
+                node_scope->type = ast_scope;
+                node_scope->next = 0;
 
-                if (!current_scope)
-                    current_scope = node_scope;
+                if (current->node) {
+                    /* Whatever we are inside, it must be scope. */
+                    assert(current->node->type == ast_scope);
 
-                if (state.ast) {
-                    // Whatever we are inside, it must be scope.
-                    assert(state.ast->type == ast_scope);
-
-                    node_scope->next = state.ast->scope.statements;
+                    node_scope->next = current->node->scope.statements;
                 }
 
+                /* This is the new parent to all nodes. */
+                push_parent(node_scope);
+
+                /* This is also the active node. */
                 state.ast = node_scope;
             } break;
 
@@ -463,8 +526,14 @@ parse(struct lex_state* lex)
             case tok_paren_r:
 
             case tok_identifier:
-            case tok_literal_int:
-            case tok_semicolon:
+            case tok_literal_int: break;
+            case tok_semicolon: {
+                /* Starting a new statement. */
+                node_t* node_statement = arena_push(arena, node_t);
+                node_statement->type = ast_statement;
+
+                state.ast = node_statement;
+            } break;
             case tok_bracket_l:
             case tok_bracket_r:
             case tok_dot:
@@ -484,7 +553,7 @@ parse(struct lex_state* lex)
     }
 
     puts("----- AST -----");
-    debug_ast_dump_ast(&state, state.ast);
+    debug_ast_dump_ast(&state, state.ast, 0);
     puts("----- END AST -----");
 
 
