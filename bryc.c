@@ -239,7 +239,7 @@ gen_cmake_lists(FILE* file, struct project const* pr)
 {
     fprintf(
         file,
-        "cmake_minumum_required(VERSION %s)\n"
+        "cmake_minimum_required(VERSION %s)\n"
         "include(version.cmake)\n"
         "project(%s)\n",
         pr->cmake_min_version,
