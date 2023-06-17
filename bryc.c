@@ -318,10 +318,6 @@ main(int argc, char** argv)
             create_file(".gitignore", &pr, gen_gitignore);
             return 0;
         }
-        if (strcmp(command, "--compile-c") == 0) {
-            compile_to_c(argv[2]);
-            return 0;
-        }
     }
     return 0;
 }

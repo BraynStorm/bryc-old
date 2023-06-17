@@ -13,3 +13,5 @@ set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_Debug OFF)
 project(bryc)
 
 add_subdirectory(bryc-c)
+
+add_executable(bryc bryc.c)
